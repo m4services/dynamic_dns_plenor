@@ -25,6 +25,7 @@ PROXIED="false"
 # VARIÁVEL DINÂMICA (passada por parâmetro)
 # ========================================
 CLIENT_SUBDOMAIN="$1"
+FORCE_INSTALL="$2"
 
 # Arquivos
 PHP_SCRIPT="/conf/cf_ddns.php"
@@ -44,6 +45,9 @@ if [ -z "$CLIENT_SUBDOMAIN" ]; then
     echo "   sh dynamic_dns_plenor.sh empresa1   → empresa1.plenor.com.br"
     echo "   sh dynamic_dns_plenor.sh loja-sp    → loja-sp.plenor.com.br"
     echo ""
+    echo "OPÇÕES:"
+    echo "   sh dynamic_dns_plenor.sh cliente -f  → Forçar reinstalação (sem perguntar)"
+    echo ""
     exit 1
 fi
 
@@ -59,13 +63,23 @@ echo ""
 
 # Verificar se o arquivo já existe
 if [ -f "$PHP_SCRIPT" ]; then
-    echo "⚠️  Arquivo $PHP_SCRIPT já existe!"
-    read -p "   Deseja sobrescrever? (s/n): " resposta
-    if [ "$resposta" != "s" ] && [ "$resposta" != "S" ]; then
-        echo "❌ Instalação cancelada."
-        exit 1
+    if [ "$FORCE_INSTALL" = "-f" ] || [ "$FORCE_INSTALL" = "--force" ]; then
+        echo "🔄 Forçando reinstalação..."
+        rm -f "$PHP_SCRIPT"
+    else
+        echo "⚠️  Arquivo $PHP_SCRIPT já existe!"
+        echo ""
+        read -p "   Deseja sobrescrever? (s/n): " resposta
+        if [ "$resposta" != "s" ] && [ "$resposta" != "S" ]; then
+            echo "❌ Instalação cancelada."
+            echo ""
+            echo "💡 Para reinstalar sem perguntar, use:"
+            echo "   fetch -o - https://raw.githubusercontent.com/m4services/dynamic_dns_plenor/main/dynamic_dns_plenor.sh | sh -s -- $CLIENT_SUBDOMAIN -f"
+            echo ""
+            exit 1
+        fi
+        rm -f "$PHP_SCRIPT"
     fi
-    rm -f "$PHP_SCRIPT"
 fi
 
 # Criar o arquivo PHP
