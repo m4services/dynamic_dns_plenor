@@ -211,6 +211,27 @@ EOFPHP
 chmod 755 "$PHP_SCRIPT"
 echo "✅ Arquivo criado e permissões configuradas"
 
+# Verificar e instalar o pacote Cron
+echo ""
+echo "📦 Verificando pacote Cron..."
+
+# Verificar se o pacote cron já está instalado
+if pkg info pfSense-pkg-Cron >/dev/null 2>&1; then
+    echo "✅ Pacote Cron já instalado"
+else
+    echo "📥 Instalando pacote Cron do pfSense..."
+    if pkg install -y pfSense-pkg-Cron >/dev/null 2>&1; then
+        echo "✅ Pacote Cron instalado com sucesso"
+        # Aguardar alguns segundos para o pacote inicializar
+        sleep 3
+    else
+        echo "⚠️  Não foi possível instalar automaticamente"
+        echo "   Instale manualmente: System > Package Manager > Available Packages > Cron"
+        echo "   Depois execute o script novamente"
+        exit 1
+    fi
+fi
+
 # Testar o script
 echo ""
 echo "🧪 Testando execução..."
@@ -230,9 +251,14 @@ echo ""
 echo "⏰ Configurando Cron Job..."
 
 CRON_CMD="/usr/local/bin/php -f /conf/cf_ddns.php"
-CRON_EXISTS=$(grep -c "$CRON_CMD" /etc/crontab 2>/dev/null || echo "0")
+CRON_EXISTS=0
 
-if [ "$CRON_EXISTS" -gt 0 ]; then
+# Verificar se já existe no crontab
+if grep -q "$CRON_CMD" /etc/crontab 2>/dev/null; then
+    CRON_EXISTS=1
+fi
+
+if [ $CRON_EXISTS -eq 1 ]; then
     echo "✅ Cron job já existe no sistema"
 else
     # Adicionar ao crontab
@@ -244,50 +270,55 @@ fi
 /usr/sbin/service cron reload >/dev/null 2>&1 || /etc/rc.d/cron reload >/dev/null 2>&1 || true
 echo "✅ Serviço cron recarregado"
 
-# Salvar configuração para persistir após reboot
+# Salvar configuração para persistir após reboot (pfSense 2.6+)
 if [ -f /cf/conf/config.xml ]; then
-    # Backup do config
-    cp /cf/conf/config.xml /cf/conf/config.xml.bak
+    # Tentar adicionar via pfSense config (silenciosamente)
+    php -r "
+    @require_once('config.inc');
     
-    # Adicionar ao config.xml se não existir
-    if ! grep -q "$CRON_CMD" /cf/conf/config.xml 2>/dev/null; then
-        # Criar entrada de cron via pfSense config
-        php -r "
-        require_once('config.inc');
-        require_once('cron.inc');
-        
-        \$cron_item = array();
-        \$cron_item['minute'] = '*/2';
-        \$cron_item['hour'] = '*';
-        \$cron_item['mday'] = '*';
-        \$cron_item['month'] = '*';
-        \$cron_item['wday'] = '*';
-        \$cron_item['who'] = 'root';
-        \$cron_item['command'] = '$CRON_CMD';
-        
-        if (!is_array(\$config['cron'])) {
-            \$config['cron'] = array();
-        }
-        if (!is_array(\$config['cron']['item'])) {
-            \$config['cron']['item'] = array();
-        }
-        
-        // Verificar se já existe
-        \$exists = false;
+    if (!isset(\$config)) {
+        exit(0);
+    }
+    
+    \$cron_cmd = '$CRON_CMD';
+    
+    if (!is_array(\$config['cron'])) {
+        \$config['cron'] = array();
+    }
+    if (!is_array(\$config['cron']['item'])) {
+        \$config['cron']['item'] = array();
+    }
+    
+    // Verificar se já existe
+    \$exists = false;
+    if (is_array(\$config['cron']['item'])) {
         foreach (\$config['cron']['item'] as \$item) {
-            if (\$item['command'] == '$CRON_CMD') {
+            if (isset(\$item['command']) && \$item['command'] == \$cron_cmd) {
                 \$exists = true;
                 break;
             }
         }
+    }
+    
+    if (!\$exists) {
+        \$cron_item = array(
+            'minute' => '*/2',
+            'hour' => '*',
+            'mday' => '*',
+            'month' => '*',
+            'wday' => '*',
+            'who' => 'root',
+            'command' => \$cron_cmd
+        );
+        \$config['cron']['item'][] = \$cron_item;
+        write_config('Added Cloudflare DDNS cron job');
         
-        if (!\$exists) {
-            \$config['cron']['item'][] = \$cron_item;
-            write_config('Added Cloudflare DDNS cron job');
-            configure_cron();
+        if (function_exists('configure_cron')) {
+            @configure_cron();
         }
-        " 2>/dev/null && echo "✅ Cron job salvo na configuração do pfSense"
-    fi
+        echo 'OK';
+    }
+    " 2>/dev/null | grep -q "OK" && echo "✅ Cron job salvo na configuração do pfSense" || echo "ℹ️  Cron job ativo (verificar em Services > Cron na interface web)"
 fi
 
 # Instruções finais
